@@ -80,6 +80,12 @@ def post_json(url: str, key: str, payload: dict, *, timeout: int = 30, limit: in
 def generate_parts(payload: dict, *, model: str | None = None, timeout: int = 30,
                    limit: int = 128_000) -> list[dict]:
     model = model or os.environ.get("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite"
+    if model == "gemini-3.8-flash":
+        # Explicitly lower 3.8 reasoning effort; keep schemas and dedicated TTS settings intact.
+        config = payload.get("generationConfig", {})
+        payload = {**payload, "generationConfig": {
+            **config, "thinkingConfig": {**config.get("thinkingConfig", {}), "thinkingLevel": "low"},
+        }}
     body = post_json(
         f"https://generativelanguage.googleapis.com/v1beta/models/{quote(model, safe='')}:generateContent",
         os.environ.get("GEMINI_API_KEY", "").strip(), payload, timeout=timeout, limit=limit,
