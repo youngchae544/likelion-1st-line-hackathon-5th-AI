@@ -25,7 +25,7 @@ class ModelResponseInvalid(Exception):
     pass
 
 
-def post_json(url: str, key: str, payload: dict, *, timeout: int = 15, limit: int = 128_000) -> dict:
+def post_json(url: str, key: str, payload: dict, *, timeout: int = 30, limit: int = 128_000) -> dict:
     if not key:
         raise ModelUnavailable("MODEL_KEY_MISSING")
     request = Request(url, data=json.dumps(payload, ensure_ascii=False).encode(),
@@ -77,7 +77,7 @@ def post_json(url: str, key: str, payload: dict, *, timeout: int = 15, limit: in
     return body
 
 
-def generate_parts(payload: dict, *, model: str | None = None, timeout: int = 15,
+def generate_parts(payload: dict, *, model: str | None = None, timeout: int = 30,
                    limit: int = 128_000) -> list[dict]:
     model = model or os.environ.get("GEMINI_MODEL", "").strip() or "gemini-3.5-flash-lite"
     body = post_json(
@@ -99,7 +99,7 @@ def generate_parts(payload: dict, *, model: str | None = None, timeout: int = 15
 
 
 def generate_json(instructions: str, text: str, schema: dict, *, media: dict | None = None,
-                  timeout: int = 15) -> str:
+                  timeout: int = 30) -> str:
     parts = [{"text": text}]
     if media is not None:
         parts.append({"inlineData": media})
