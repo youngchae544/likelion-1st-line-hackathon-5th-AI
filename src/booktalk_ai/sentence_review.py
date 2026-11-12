@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from .google_api import ModelResponseInvalid, generate_json
+
+logger = logging.getLogger(__name__)
 
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
 
@@ -72,6 +75,11 @@ INSTRUCTIONS = """한국어 그림책 표현을 배우는 부모의 문장을 �
 뜻이 맞지만 표현을 다듬을 수 있으면 polish, 잘 전달된 점, 가장 중요한 수정점 한 가지,
 원래 의도를 유지한 자연스러운 한국어 교정 문장을 반환하세요.
 뜻과 쓰임이 모두 자연스러우면 natural을 반환하세요.
+모든 결과에 kind, good_point, correction, suggested_sentence, hint 키를 포함하세요.
+polish는 good_point, correction, suggested_sentence를 반드시 비어 있지 않게 쓰고 hint는 빈 문자열로 쓰세요.
+meaning과 missing은 hint를 반드시 쓰고 나머지 설명 필드는 빈 문자열로 쓰세요.
+natural은 kind 외의 설명 필드를 모두 빈 문자열로 쓰세요.
+설명은 각각 300자 이내, suggested_sentence는 원문과 다른 문장으로 100자 이내로 쓰세요.
 """
 
 
@@ -84,12 +92,12 @@ GEMINI_REVIEW_SCHEMA = {
             "type": "OBJECT",
             "properties": {
                 "kind": {"type": "STRING", "enum": ["polish", "meaning", "natural", "missing"]},
-                "good_point": {"type": "STRING"},
-                "correction": {"type": "STRING"},
-                "suggested_sentence": {"type": "STRING"},
-                "hint": {"type": "STRING"},
+                "good_point": {"type": "STRING", "maxLength": 300},
+                "correction": {"type": "STRING", "maxLength": 300},
+                "suggested_sentence": {"type": "STRING", "maxLength": 100},
+                "hint": {"type": "STRING", "maxLength": 300},
             },
-            "required": ["kind"],
+            "required": ["kind", "good_point", "correction", "suggested_sentence", "hint"],
         }
     },
     "required": ["result"],
@@ -98,13 +106,26 @@ GEMINI_REVIEW_SCHEMA = {
 
 def review_sentence(data: SentenceReviewRequest) -> SentenceReview:
     review_input = data.model_dump_json(include={"sentence", "expression", "definition", "source_sentence"})
-    message = generate_json(INSTRUCTIONS, review_input, GEMINI_REVIEW_SCHEMA)
-    try:
-        result = Judgment.model_validate_json(message).result
-    except ValidationError as exc:
-        raise ModelResponseInvalid from exc
-    if isinstance(result, Polish) and result.suggested_sentence == data.sentence:
-        raise ModelResponseInvalid
+    for attempt in range(2):
+        # One regeneration for invalid output; never feed raw output back into the prompt.
+        instructions = INSTRUCTIONS + ("\n직전 응답이 형식 검증을 통과하지 못했습니다. 필수 키와 판정별 조건을 확인하세요." if attempt else "")
+        try:
+            message = generate_json(instructions, review_input, GEMINI_REVIEW_SCHEMA)
+            result = Judgment.model_validate_json(message).result
+            if isinstance(result, Polish) and result.suggested_sentence == data.sentence:
+                logger.warning("sentence_review_invalid category=unchanged_correction attempt=%d", attempt + 1)
+                raise ModelResponseInvalid
+        except (ValidationError, ModelResponseInvalid) as exc:
+            if isinstance(exc, ValidationError):
+                # Error type names are safe; input values and messages may contain private text.
+                logger.warning("sentence_review_validation types=%s",
+                               ",".join(sorted({error["type"] for error in exc.errors(include_input=False)})))
+            logger.warning("sentence_review_invalid category=schema_or_generation attempt=%d retry=%s",
+                           attempt + 1, attempt == 0)
+            if attempt == 0:
+                continue
+            raise ModelResponseInvalid from exc
+        break
     return SentenceReview(
         result=result,
         original=data.sentence,
