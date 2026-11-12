@@ -74,6 +74,21 @@ INSTRUCTIONS = """한국어 그림책 표현을 배우는 부모의 문장을 �
 '소풍 가기 전날에는 가슴이 어떤 느낌일까요?'처럼 다시 생각해 볼 상황을 주세요.
 뜻이 맞지만 표현을 다듬을 수 있으면 polish, 잘 전달된 점, 가장 중요한 수정점 한 가지,
 원래 의도를 유지한 자연스러운 한국어 교정 문장을 반환하세요.
+상황의 이유가 생략됐다는 이유만으로 meaning으로 판정하지 마세요.
+예를 들어 '저는 가슴이 두근두근을 해요.'는 뜻이 맞고 연결 방식만 어색하므로 polish입니다.
+polish의 suggested_sentence는 새로운 예문이 아니라 부모가 쓴 바로 그 문장의 최소 교정입니다.
+원문의 주체, 대상, 신체 부위, 시제, 부정 여부, 이미 제시한 상황을 유지하세요.
+원문에 없는 시간, 장소, 인물, 사건, 감정의 이유를 추가하지 마세요.
+그림책 문장이나 정의에 있는 상황도 부모의 교정문에 가져오지 마세요.
+필요한 조사, 띄어쓰기, 활용, 연결 방식만 고치고 목표 표현을 그대로 살리세요.
+예: '저는 가슴이 두근두근을 해요.' → '저는 가슴이 두근두근해요.'
+이때 '내일 동물원에 갈 생각에 마음이 두근두근해요.'처럼 새 상황을 만드는 것은 금지합니다.
+예: '어제 발표 전에 가슴이 두근두근을 했어요.' → '어제 발표 전에 가슴이 두근두근했어요.'
+예: '돌이 연못에 퐁당을 빠졌어요.' → '돌이 연못에 퐁당 빠졌어요.'
+good_point는 실제 입력에 드러난 의미나 시도를 구체적으로 한 가지 인정하세요.
+부모가 말하지 않은 기쁨, 기대감, 사건을 잘 설명했다고 칭찬하지 마세요.
+correction은 가장 중요한 수정 한 가지만 쉬운 한국어로 설명하세요.
+예: "'두근두근' 뒤의 '을'을 빼고 '해요'를 붙여 보세요."
 뜻과 쓰임이 모두 자연스러우면 natural을 반환하세요.
 모든 결과에 kind, good_point, correction, suggested_sentence, hint 키를 포함하세요.
 polish는 good_point, correction, suggested_sentence를 반드시 비어 있지 않게 쓰고 hint는 빈 문자열로 쓰세요.
@@ -92,9 +107,12 @@ GEMINI_REVIEW_SCHEMA = {
             "type": "OBJECT",
             "properties": {
                 "kind": {"type": "STRING", "enum": ["polish", "meaning", "natural", "missing"]},
-                "good_point": {"type": "STRING", "maxLength": 300},
-                "correction": {"type": "STRING", "maxLength": 300},
-                "suggested_sentence": {"type": "STRING", "maxLength": 100},
+                "good_point": {"type": "STRING", "maxLength": 300,
+                               "description": "입력에서 확인되는 잘 전달된 점 한 가지. 없는 상황이나 감정을 추측하지 않음."},
+                "correction": {"type": "STRING", "maxLength": 300,
+                               "description": "가장 중요한 수정 한 가지만 쉬운 한국어로 설명."},
+                "suggested_sentence": {"type": "STRING", "maxLength": 100,
+                                       "description": "부모 원문의 최소 교정. 주체·대상·시제·상황을 유지하고 새 시간·장소·사건을 추가하지 않음."},
                 "hint": {"type": "STRING", "maxLength": 300},
             },
             "required": ["kind", "good_point", "correction", "suggested_sentence", "hint"],
