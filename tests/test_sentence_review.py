@@ -33,7 +33,7 @@ def test_structured_review(monkeypatch, result):
 
     def model(request, timeout, context):
         payload = json.loads(request.data)
-        assert timeout == 15
+        assert timeout == 30
         assert request.full_url.endswith("/models/gemini-3.5-flash-lite:generateContent")
         assert request.get_header("X-goog-api-key") == "test-key"
         assert payload["generationConfig"]["responseMimeType"] == "application/json"

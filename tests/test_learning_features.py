@@ -24,11 +24,12 @@ def test_vision_ocr_and_evidence_filter(monkeypatch):
         assert payload["requests"][0]["features"] == [{"type": "DOCUMENT_TEXT_DETECTION"}]
         return {"responses": [{"fullTextAnnotation": {"text": "가슴이\n두근두근했어요."}}]}
 
-    def gemini(instructions, text, schema):
+    def gemini(instructions, text, schema, **kwargs):
         assert "image_base64" not in text
-        item = {**CONTEXT, "type": "mimetic", "translation": "Tim đập thình thịch"}
+        item = {"expression": "두근두근", "type": "mimetic", "definition": CONTEXT["definition"],
+                "translation": "Tim đập thình thịch", "source_index": 0}
         return json.dumps({"expressions": [
-            item, {**item, "expression": "깡충깡충", "source_sentence": "토끼가 깡충깡충 뛰어요."},
+            item, item,
         ]})
 
     monkeypatch.setattr(learning, "post_json", vision)
@@ -42,8 +43,8 @@ def test_vision_ocr_and_evidence_filter(monkeypatch):
 def test_photo_empty_states_and_invalid_media(monkeypatch):
     monkeypatch.setattr(learning, "post_json", lambda *a, **kw: {"responses": [{}]})
     assert client.post("/v1/photo-analyses", json=PHOTO).json()["status"] == "no_text"
-    monkeypatch.setattr(learning, "read_photo", lambda _: "안녕하세요.")
-    monkeypatch.setattr(learning, "generate_json", lambda *a: '{"expressions":[]}')
+    monkeypatch.setattr(learning, "read_photo", lambda *a, **kw: "안녕하세요.")
+    monkeypatch.setattr(learning, "generate_json", lambda *a, **kw: '{"expressions":[]}')
     assert client.post("/v1/photo-analyses", json=PHOTO).json()["status"] == "no_expressions"
 
 
