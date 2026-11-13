@@ -15,7 +15,7 @@ ITEM = {"expression": "두근두근", "type": "mimetic", "definition": "가슴�
 
 @pytest.mark.parametrize("invalid", [
     "not json", '{"expressions":null}', '{"expressions":[{"expression":"두근두근"}]}',
-    json.dumps({"expressions": [{**ITEM, "source_index": 99}]}),
+    json.dumps({"expressions": [{**ITEM, "source_index": 99, "expression": "없는표현"}]}),
     json.dumps({"expressions": [{**ITEM, "expression": "깡충깡충"}]}),
 ])
 def test_invalid_generation_retries_using_same_ocr(monkeypatch, caplog, invalid):
@@ -87,3 +87,33 @@ def test_selected_sources_preserve_correct_context(monkeypatch):
                         lambda *a, **kw: json.dumps({"expressions": [other]}))
     response = client.post("/v1/photo-analyses", json=PHOTO)
     assert response.json()["expressions"][0]["source_sentence"] == "돌이 퐁당 빠졌어요."
+
+
+@pytest.mark.parametrize("index", [1, 99])
+def test_wrong_index_recovers_unique_ocr_source(monkeypatch, index):
+    monkeypatch.setattr(learning, "read_photo", lambda *a, **kw: "가슴이 두근두근했어요. 토끼가 웃었어요.")
+    calls = []
+    def generate(*args, **kwargs):
+        calls.append(1)
+        return json.dumps({"expressions": [{**ITEM, "source_index": index}]})
+    monkeypatch.setattr(learning, "generate_json", generate)
+    r = client.post("/v1/photo-analyses", json=PHOTO)
+    assert r.status_code == 200
+    assert r.json()["expressions"][0]["source_sentence"] == "가슴이 두근두근했어요."
+    assert len(calls) == 1
+
+
+def test_invalid_item_does_not_discard_grounded_items(monkeypatch):
+    monkeypatch.setattr(learning, "read_photo", lambda *a, **kw: "가슴이 두근두근했어요.")
+    monkeypatch.setattr(learning, "generate_json", lambda *a, **kw: json.dumps({"expressions": [
+        ITEM, {**ITEM, "expression": "없는표현"},
+    ]}))
+    r = client.post("/v1/photo-analyses", json=PHOTO)
+    assert r.status_code == 200
+    assert [e["expression"] for e in r.json()["expressions"]] == ["두근두근"]
+
+
+def test_ambiguous_wrong_index_never_guesses_a_source(monkeypatch):
+    monkeypatch.setattr(learning, "read_photo", lambda *a, **kw: "가슴이 두근두근했어요. 마음이 두근두근해요. 토끼가 웃어요.")
+    monkeypatch.setattr(learning, "generate_json", lambda *a, **kw: json.dumps({"expressions": [{**ITEM, "source_index": 2}]}))
+    assert client.post("/v1/photo-analyses", json=PHOTO).status_code == 502

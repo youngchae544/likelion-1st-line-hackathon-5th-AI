@@ -167,16 +167,22 @@ def analyze_photo(data: PhotoRequest) -> PhotoResult:
             draft = parse_result(PhotoDraft, message)
             expressions = {}
             for item in draft.expressions:
-                if item.source_index >= len(sources):
-                    raise ModelResponseInvalid
-                sentence = sources[item.source_index]
                 expression = normalize(item.expression)
-                if expression not in normalize(sentence):
-                    raise ModelResponseInvalid
+                sentence = sources[item.source_index] if item.source_index < len(sources) else None
+                if sentence is None or expression not in normalize(sentence):
+                    # A valid expression can arrive with an adjacent/wrong source index.
+                    # Recover only when the OCR text gives one unambiguous source.
+                    matches = [source for source in sources if expression in normalize(source)]
+                    if len(matches) != 1:
+                        logger.warning("photo_item_invalid category=source_mismatch")
+                        continue
+                    sentence = matches[0]
                 expressions.setdefault(expression, Expression(
                     expression=item.expression, type=item.type, definition=item.definition,
                     translation=item.translation, source_sentence=sentence,
                 ))
+            if draft.expressions and not expressions:
+                raise ModelResponseInvalid
             return PhotoResult(status="ok" if expressions else "no_expressions", language=data.language,
                                expressions=list(expressions.values()))
         except ModelResponseInvalid:
