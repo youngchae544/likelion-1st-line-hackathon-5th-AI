@@ -6,12 +6,14 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 import unicodedata
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
+from . import photo_cache
 from .google_api import ModelResponseInvalid, ModelUnavailable, generate_json, post_json
 
 Language = Literal["vi", "zh-CN", "en"]
@@ -140,6 +142,39 @@ def analyze_photo(data: PhotoRequest) -> PhotoResult:
     text = read_photo(data.image_base64, timeout=20)
     if not text:
         return PhotoResult(status="no_text", language=data.language, expressions=[])
+    sources = photo_sources(text)
+    key = photo_cache.cache_key(data.image_base64, data.language)
+
+    def create() -> dict:
+        result = _generate_photo(data, text, deadline)
+        return {"expressions": [
+            {**item.model_dump(exclude={"source_sentence"}),
+             "source_index": sources.index(item.source_sentence)}
+            for item in result.expressions
+        ]}
+
+    try:
+        draft = PhotoDraft.model_validate(photo_cache.get_or_create(key, create))
+    except TimeoutError:
+        raise
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        logger.warning("photo_cache_unavailable category=%s", type(exc).__name__)
+        raise ModelUnavailable("PHOTO_CACHE_UNAVAILABLE") from exc
+    expressions = []
+    for item in draft.expressions:
+        sentence = sources[item.source_index] if item.source_index < len(sources) else None
+        if sentence is None or normalize(item.expression) not in normalize(sentence):
+            matches = [source for source in sources if normalize(item.expression) in normalize(source)]
+            if len(matches) != 1:
+                # Never silently regenerate a different set when cached provenance is unavailable.
+                raise OcrInvalid
+            sentence = matches[0]
+        expressions.append(Expression(**item.model_dump(exclude={"source_index"}), source_sentence=sentence))
+    return PhotoResult(status="ok" if expressions else "no_expressions",
+                       language=data.language, expressions=expressions)
+
+
+def _generate_photo(data: PhotoRequest, text: str, deadline: float) -> PhotoResult:
     sources = photo_sources(text)
     schema = object_schema(expressions={
         "type": "ARRAY", "maxItems": 8, "items": object_schema(
