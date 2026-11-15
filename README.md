@@ -17,21 +17,28 @@
 
 ## 실행
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+저장소 루트에서 실행합니다.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
+cp .env.example .env
+# .env에 Google API 키와 32자 이상의 임의 AI_SERVICE_API_KEY를 입력
 uvicorn booktalk_ai.api:app --host 127.0.0.1 --port 8090
 ```
 
+`/health`는 인증 없이 조회할 수 있습니다. 모든 `/v1/*` 요청에는
+`X-AI-Service-Key` 헤더가 필요합니다. `/docs`의 **Authorize**에서 같은 키를
+입력해 테스트할 수 있습니다. 자세한 배포 순서는 [서버 간 인증](docs/service-auth.md)을 참고하세요.
+
 ## 테스트
 
-핵심 RAG 엔진 테스트는 외부 패키지 없이 실행할 수 있다.
-
-```powershell
-$env:PYTHONPATH="src"
-python -m unittest discover -s tests -v
+```bash
+python -m pytest -q
 ```
+
+테스트의 Google 호출은 모의 처리합니다. 테스트 통과가 실제 배포 연동까지 검증하는 것은 아닙니다.
 
 ## API
 
@@ -48,7 +55,7 @@ python -m unittest discover -s tests -v
 한국어 뜻, 출처 문장, 설정 언어의 번역을 넘깁니다. 관련 표현과 예문은 선택 사항입니다.
 뜻 혼동 피드백의 정의·번역과 자연스러운 문장의 관련 표현은 요청의 검증된 자료를 그대로 사용합니다.
 
-`ai-service` 폴더에서 서비스를 시작하면 해당 폴더의 `.env`를 읽습니다.
+저장소 루트에서 서비스를 시작하면 해당 폴더의 `.env`를 읽습니다.
 파일이 없다면 `cp .env.example .env`로 만듭니다. [Google AI Studio](https://aistudio.google.com/app/apikey)에서
 발급한 키를 `GEMINI_API_KEY`에 넣고 서비스를 재시작합니다.
 기본 모델은 `gemini-3.5-flash-lite`이며 `GEMINI_MODEL`로 변경할 수 있습니다.
@@ -73,7 +80,7 @@ python -m unittest discover -s tests -v
 
 ## 사진·단어 학습·대화·음성 API
 
-모든 요청은 JSON입니다. `/docs`에서 필드와 결과 형식을 확인할 수 있습니다.
+모든 요청은 인증 헤더가 필요하며 본문은 JSON입니다. `/docs`에서 필드와 결과 형식을 확인할 수 있습니다.
 배포 환경에 `GEMINI_API_KEY`와 Cloud Vision이 활성화된 프로젝트의
 `GOOGLE_VISION_API_KEY`를 비밀 환경 변수로 등록합니다.
 
@@ -143,3 +150,10 @@ SQLite에 저장합니다. 반복 요청에서는 Gemini를 다시 호출하지 
 
 따라 말하기의 전사 모드와 백엔드 연결, 발음 평가 한계는
 [발음 관찰용 전사 연동](docs/pronunciation-transcription.md)을 참고하세요.
+
+
+### 문장 첨삭 요청 제한
+
+사진 분석과 동일하게 `definition`, `translation`, `source_sentence`는 각각 최대 500자입니다.
+입력 문장은 최대 100자입니다. 첨삭 생성은 요청당 최대 20초로 호출하며, 형식 오류 재시도를
+포함해 45초의 전체 시간 예산을 공유합니다. 예산을 소진하면 HTTP 504를 반환합니다.

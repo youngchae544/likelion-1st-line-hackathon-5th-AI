@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import os
+import hmac
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from .models import Document, GraphEdge, GraphNode, Route
@@ -24,10 +26,24 @@ from .speech import SpeechRequest, TranscriptionRequest, TranscriptionResult, sy
 
 load_dotenv(Path.cwd() / ".env", override=False)
 
+service_key_header = APIKeyHeader(name="X-AI-Service-Key", scheme_name="ServiceKey", auto_error=False)
+
 app = FastAPI(title="Booktalk AI Service", version="0.1.0")
 orchestrator = RagOrchestrator(
     generator=GeminiAnswerGenerator() if os.getenv("RAG_GENERATOR", "").lower() == "gemini" else None
 )
+
+
+@app.middleware("http")
+async def authenticate_service(request: Request, call_next):
+    if request.url.path.startswith("/v1/"):
+        expected = os.environ.get("AI_SERVICE_API_KEY", "").strip()
+        if len(expected) < 32:
+            return JSONResponse(status_code=503, content={"detail": {"code": "AI_AUTH_NOT_CONFIGURED"}})
+        supplied = request.headers.get("X-AI-Service-Key", "")
+        if not hmac.compare_digest(supplied.encode(), expected.encode()):
+            return JSONResponse(status_code=401, content={"detail": {"code": "AI_UNAUTHORIZED"}})
+    return await call_next(request)
 
 
 def error_handler(status: int, code: str):
@@ -96,13 +112,13 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-@app.post("/v1/routes/preview")
+@app.post("/v1/routes/preview", dependencies=[Depends(service_key_header)])
 def preview(request: AnswerRequest) -> dict:
     documents, _, _ = convert(request)
     return orchestrator.preview_route(request.query, documents)
 
 
-@app.post("/v1/answers")
+@app.post("/v1/answers", dependencies=[Depends(service_key_header)])
 def answer(request: AnswerRequest) -> dict:
     documents, nodes, edges = convert(request)
     result = orchestrator.answer(request.query, documents, nodes, edges, request.route)
@@ -125,37 +141,37 @@ def answer(request: AnswerRequest) -> dict:
     }
 
 
-@app.post("/v1/sentence-reviews", response_model=SentenceReview)
+@app.post("/v1/sentence-reviews", dependencies=[Depends(service_key_header)], response_model=SentenceReview)
 def sentence_review(request: SentenceReviewRequest) -> SentenceReview:
     return review_sentence(request)
 
 
-@app.post("/v1/photo-analyses", response_model=PhotoResult)
+@app.post("/v1/photo-analyses", dependencies=[Depends(service_key_header)], response_model=PhotoResult)
 def photo_analysis(request: PhotoRequest) -> PhotoResult:
     return analyze_photo(request)
 
 
-@app.post("/v1/word-lessons", response_model=WordLessonResult)
+@app.post("/v1/word-lessons", dependencies=[Depends(service_key_header)], response_model=WordLessonResult)
 def word_lesson(request: WordLessonRequest) -> WordLessonResult:
     return make_lesson(request)
 
 
-@app.post("/v1/dialogues/openings", response_model=Opening)
+@app.post("/v1/dialogues/openings", dependencies=[Depends(service_key_header)], response_model=Opening)
 def dialogue_opening(request: DialogueContext) -> Opening:
     return start_dialogue(request)
 
 
-@app.post("/v1/dialogues/turns", response_model=TurnResult)
+@app.post("/v1/dialogues/turns", dependencies=[Depends(service_key_header)], response_model=TurnResult)
 def dialogue_turn(request: DialogueTurn) -> TurnResult:
     return answer_dialogue(request)
 
 
-@app.post("/v1/transcriptions", response_model=TranscriptionResult)
+@app.post("/v1/transcriptions", dependencies=[Depends(service_key_header)], response_model=TranscriptionResult)
 def transcription(request: TranscriptionRequest) -> TranscriptionResult:
     return transcribe(request)
 
 
-@app.post("/v1/speech", response_class=Response, responses={200: {"content": {"audio/wav": {}}}})
+@app.post("/v1/speech", dependencies=[Depends(service_key_header)], response_class=Response, responses={200: {"content": {"audio/wav": {}}}})
 def speech(request: SpeechRequest) -> Response:
     return Response(synthesize(request), media_type="audio/wav",
                     headers={"X-Playback-Rate": str(request.playback_rate)})
