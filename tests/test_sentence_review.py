@@ -45,11 +45,12 @@ def test_structured_review(monkeypatch, result):
         return io.BytesIO(json.dumps({"candidates": [candidate]}).encode())
 
     monkeypatch.setattr(google_api, "urlopen", model)
-    response = client.post("/v1/sentence-reviews", json=SAMPLE)
+    sample = {**SAMPLE, "sentence": "선물을 기다려요."} if result["kind"] == "missing" else SAMPLE
+    response = client.post("/v1/sentence-reviews", json=sample)
     assert response.status_code == 200
     body = response.json()
     assert body["result"] == result
-    assert body["original"] == SAMPLE["sentence"]
+    assert body["original"] == sample["sentence"]
     assert body["translation"] == (SAMPLE["translation"] if result["kind"] == "meaning" else None)
     assert body["related"] == (SAMPLE["related"] if result["kind"] == "natural" else [])
 
@@ -102,3 +103,37 @@ def test_provider_errors_do_not_expose_keys(monkeypatch, http_status, expected_c
     assert response.status_code == expected_status
     assert response.json() == {"detail": {"code": expected_code}}
     assert "private-test-key" not in response.text
+
+
+@pytest.mark.parametrize("sentence", ["구불구불하다", "길이 구불구불해요.", "길이 구불 구불했어요."])
+def test_literal_expression_cannot_be_reported_missing(monkeypatch, sentence):
+    from booktalk_ai import sentence_review as review
+    calls = []
+    def generate(instructions, prompt, schema, **kwargs):
+        assert json.loads(prompt)["has_literal_target"] is True
+        assert "missing" not in schema["properties"]["result"]["properties"]["kind"]["enum"]
+        calls.append(1)
+        return json.dumps({"result": {"kind": "missing", "hint": "힌트"}}) if len(calls) == 1 else json.dumps({"result": {"kind": "natural"}})
+    monkeypatch.setattr(review, "generate_json", generate)
+    response = client.post("/v1/sentence-reviews", json={**SAMPLE, "expression": "구불구불", "sentence": sentence})
+    assert response.status_code == 200 and response.json()["result"]["kind"] == "natural"
+    assert len(calls) == 2
+    assert "missing" in review.GEMINI_REVIEW_SCHEMA["properties"]["result"]["properties"]["kind"]["enum"]
+
+
+def test_repeated_false_missing_is_error_not_feedback(monkeypatch):
+    from booktalk_ai import sentence_review as review
+    monkeypatch.setattr(review, "generate_json", lambda *a, **kw: json.dumps({"result": {"kind": "missing", "hint": "힌트"}}))
+    r = client.post("/v1/sentence-reviews", json={**SAMPLE, "expression": "구불구불", "sentence": "구불구불하다"})
+    assert r.status_code == 502
+
+
+def test_decomposed_hangul_is_still_present(monkeypatch):
+    import unicodedata
+    from booktalk_ai import sentence_review as review
+    def generate(instructions, prompt, schema):
+        assert json.loads(prompt)["has_literal_target"] is True
+        return '{"result":{"kind":"natural"}}'
+    monkeypatch.setattr(review, "generate_json", generate)
+    r = client.post("/v1/sentence-reviews", json={**SAMPLE, "expression": "구불구불", "sentence": unicodedata.normalize("NFD", "구불구불하다")})
+    assert r.status_code == 200

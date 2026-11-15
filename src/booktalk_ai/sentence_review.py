@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import json
+import unicodedata
+from copy import deepcopy
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
@@ -67,6 +70,10 @@ INSTRUCTIONS = """한국어 그림책 표현을 배우는 부모의 문장을 �
 제공된 정의와 그림책 문장을 근거로 문맥 속 표현을 판단하세요.
 그림책 문장이 없으면 제공된 정의와 부모의 문장만으로 판단하세요.
 목표 표현이 활용형을 포함해 쓰이지 않았으면 missing을 반환하세요.
+입력의 has_literal_target=true이면 목표 표현이 실제 문자열에 포함된 것이므로 missing은 금지입니다.
+'구불구불하다', '구불구불해요', '두근두근해요'처럼 뒤에 활용 어미가 붙어도 표현을 사용한 것입니다.
+'구불구불하다'처럼 짧게 말해 주어나 상황이 생략되어도 표현 없음으로 판정하지 마세요.
+문장 보완이 필요하면 polish로 안내하고, 뜻이 다른 경우에만 meaning으로 안내하세요.
 목표 표현을 다른 뜻으로 썼으면 meaning을 반환하세요. hint에는 학습자가 같은
 목표 표현으로 새 문장을 직접 만들 수 있도록, 제공된 정의에 맞는 일상 상황 하나를
 짧은 한국어 질문으로 제시하세요. 다른 표현을 추천하거나 완성된 답을 주지 마세요.
@@ -123,13 +130,23 @@ GEMINI_REVIEW_SCHEMA = {
 
 
 def review_sentence(data: SentenceReviewRequest) -> SentenceReview:
-    review_input = data.model_dump_json(include={"sentence", "expression", "definition", "source_sentence"})
+    compact = lambda text: "".join(unicodedata.normalize("NFC", text).split())
+    has_literal_target = compact(data.expression) in compact(data.sentence)
+    review_data = data.model_dump(include={"sentence", "expression", "definition", "source_sentence"})
+    review_data["has_literal_target"] = has_literal_target
+    review_input = json.dumps(review_data, ensure_ascii=False)
+    schema = deepcopy(GEMINI_REVIEW_SCHEMA)
+    if has_literal_target:
+        schema["properties"]["result"]["properties"]["kind"]["enum"].remove("missing")
     for attempt in range(2):
         # One regeneration for invalid output; never feed raw output back into the prompt.
         instructions = INSTRUCTIONS + ("\n직전 응답이 형식 검증을 통과하지 못했습니다. 필수 키와 판정별 조건을 확인하세요." if attempt else "")
         try:
-            message = generate_json(instructions, review_input, GEMINI_REVIEW_SCHEMA)
+            message = generate_json(instructions, review_input, schema)
             result = Judgment.model_validate_json(message).result
+            if has_literal_target and isinstance(result, Missing):
+                logger.warning("sentence_review_invalid category=target_present attempt=%d", attempt + 1)
+                raise ModelResponseInvalid
             if isinstance(result, Polish) and result.suggested_sentence == data.sentence:
                 logger.warning("sentence_review_invalid category=unchanged_correction attempt=%d", attempt + 1)
                 raise ModelResponseInvalid
