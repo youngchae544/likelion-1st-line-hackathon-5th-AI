@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from booktalk_ai import google_api
 from booktalk_ai.api import app
 
-client = TestClient(app, headers={"X-AI-Service-Key": "test-service-key-not-a-secret-12345678"})
+client = TestClient(app)
 SAMPLE = {
     "sentence": "아이가 넘어져서 두근두근 울었어요.",
     "expression": "두근두근",
@@ -33,7 +33,7 @@ def test_structured_review(monkeypatch, result):
 
     def model(request, timeout, context):
         payload = json.loads(request.data)
-        assert timeout == 20
+        assert timeout == 30
         assert request.full_url.endswith("/models/gemini-3.5-flash-lite:generateContent")
         assert request.get_header("X-goog-api-key") == "test-key"
         assert payload["generationConfig"]["responseMimeType"] == "application/json"
@@ -131,7 +131,7 @@ def test_repeated_false_missing_is_error_not_feedback(monkeypatch):
 def test_decomposed_hangul_is_still_present(monkeypatch):
     import unicodedata
     from booktalk_ai import sentence_review as review
-    def generate(instructions, prompt, schema, **kwargs):
+    def generate(instructions, prompt, schema):
         assert json.loads(prompt)["has_literal_target"] is True
         return '{"result":{"kind":"natural"}}'
     monkeypatch.setattr(review, "generate_json", generate)

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from booktalk_ai import conversation, learning, speech
 from booktalk_ai.api import app
 
-client = TestClient(app, headers={"X-AI-Service-Key": "test-service-key-not-a-secret-12345678"})
+client = TestClient(app)
 CONTEXT = {
     "expression": "두근두근", "definition": "가슴이 빨리 뛰는 모양",
     "source_sentence": "가슴이 두근두근했어요.", "language": "vi",

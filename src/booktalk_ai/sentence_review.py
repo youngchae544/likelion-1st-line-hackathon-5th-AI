@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 import json
 import unicodedata
 from copy import deepcopy
@@ -12,12 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, Validation
 from .google_api import ModelResponseInvalid, generate_json
 
 logger = logging.getLogger(__name__)
-REVIEW_TIMEOUT_SECONDS = 45
-REVIEW_ATTEMPT_SECONDS = 20
 
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
-
-ContextText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class RelatedExpression(BaseModel):
@@ -30,10 +25,10 @@ class SentenceReviewRequest(BaseModel):
 
     sentence: str = Field(min_length=1, max_length=100)
     expression: str = Field(min_length=1, max_length=50)
-    definition: ContextText
-    source_sentence: ContextText | None = None
+    definition: ShortText
+    source_sentence: ShortText | None = None
     language: Literal["vi", "zh-CN", "en"]
-    translation: ContextText
+    translation: ShortText
     related: list[RelatedExpression] = Field(default_factory=list, max_length=5)
 
 
@@ -135,7 +130,6 @@ GEMINI_REVIEW_SCHEMA = {
 
 
 def review_sentence(data: SentenceReviewRequest) -> SentenceReview:
-    deadline = time.monotonic() + REVIEW_TIMEOUT_SECONDS
     compact = lambda text: "".join(unicodedata.normalize("NFC", text).split())
     has_literal_target = compact(data.expression) in compact(data.sentence)
     review_data = data.model_dump(include={"sentence", "expression", "definition", "source_sentence"})
@@ -147,14 +141,8 @@ def review_sentence(data: SentenceReviewRequest) -> SentenceReview:
     for attempt in range(2):
         # One regeneration for invalid output; never feed raw output back into the prompt.
         instructions = INSTRUCTIONS + ("\n직전 응답이 형식 검증을 통과하지 못했습니다. 필수 키와 판정별 조건을 확인하세요." if attempt else "")
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError
         try:
-            message = generate_json(instructions, review_input, schema,
-                                    timeout=min(REVIEW_ATTEMPT_SECONDS, remaining))
-            if time.monotonic() >= deadline:
-                raise TimeoutError
+            message = generate_json(instructions, review_input, schema)
             result = Judgment.model_validate_json(message).result
             if has_literal_target and isinstance(result, Missing):
                 logger.warning("sentence_review_invalid category=target_present attempt=%d", attempt + 1)

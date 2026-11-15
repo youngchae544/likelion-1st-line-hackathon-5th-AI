@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from booktalk_ai.api import app
 from booktalk_ai import speech
 
-client = TestClient(app, headers={"X-AI-Service-Key": "test-service-key-not-a-secret-12345678"})
+client = TestClient(app)
 AUDIO = {"mime_type": "audio/wav", "audio_base64": "UklGRg=="}
 
 

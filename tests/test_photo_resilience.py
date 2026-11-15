@@ -7,7 +7,7 @@ from booktalk_ai import learning
 from booktalk_ai.api import app
 from booktalk_ai.google_api import ModelResponseInvalid
 
-client = TestClient(app, headers={"X-AI-Service-Key": "test-service-key-not-a-secret-12345678"})
+client = TestClient(app)
 PHOTO = {"image_base64": "aW1hZ2U=", "language": "vi"}
 ITEM = {"expression": "두근두근", "type": "mimetic", "definition": "가슴이 자꾸 세게 뛰는 모양",
         "translation": "Tim đập thình thịch", "source_index": 0}
